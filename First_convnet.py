@@ -215,7 +215,7 @@ history = model.fit_generator(
     validation_data=validation_generator,
     validation_steps=50)
 
-model.save('cats_and_dogs_small_1.h5')
+model.save(r'C:\Users\VanBoven\Documents\GitHub\DataAnalysis/Broccoli_model1.h5')
 
 acc = history.history['acc']
 val_acc = history.history['val_acc']
