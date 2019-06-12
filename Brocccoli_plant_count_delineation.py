@@ -68,7 +68,7 @@ def transform_geometry(geometry):
     geometry = transform(project, geometry)  # apply projection
     return geometry
 
-def write_plants2shp(img_path, df, shp_dir, shp_name):
+def write_plants2shp(img_path, out_path, df):
     #get transform
     src = rasterio.open(img_path)
     #convert centroids to coords and contours to shape in lat, lon
@@ -97,12 +97,9 @@ def write_plants2shp(img_path, df, shp_dir, shp_name):
     gdf_poly = gdf_poly.drop(['contours', 'moment', 'cx', 'cy', 'bbox', 'output', 'input',
        'centroid', 'coords', 'geom', 'geom2'], axis=1)
     
-    gdf_point.to_file(r'E:\400 Data analysis\410 Plant count\c01_verdonk\Rijweg stalling 2/AZ74.shp')
-    gdf_poly.to_file(r'E:\400 Data analysis\410 Plant count\c01_verdonk\Rijweg stalling 2/AZ74_shape.shp')    
-
+    gdf_point.to_file(os.path.join(out_path, (os.path.basename(img_path)[-16:-4] + '_points.shp')))
+    gdf_poly.to_file(os.path.join(out_path, (os.path.basename(img_path)[-16:-4] + '_poly.shp')))
     return
-
-gpdf = gpd.read_file(r'E:\400 Data analysis\410 Plant count\test_results/c07_hollandbean-Hendrik de Heer-201905131422_clipped_poly2.shp')
 
 def multi2single(gpdf):
     gpdf = gpdf.drop(['area'], axis = 1)
@@ -120,15 +117,93 @@ def multi2single(gpdf):
     gpdf_singlepoly.reset_index(inplace=True, drop=True)
     return gpdf_singlepoly
 
-gpdf_multipoly.to_file(r'E:\400 Data analysis\410 Plant count\test_results/Hendrik-multipoly.shp')
+def get_scaler(img_path, kmeans_init):
+    #get raster
+    ds = gdal.Open(img_path)
+    band = ds.GetRasterBand(1)
+    xsize = band.XSize
+    ysize = band.YSize
+    #define size of img blocks
+    x_block_size = 1024  
+    y_block_size = 1024
+    #create iterator to process blocks of imagery one by one. #get 10% subset 
+    it = list(range(0,1000, 5))
+    #initiate nparray
+    subset = np.array((), dtype = np.uint8)
+    subset = subset.reshape(0,2)
+    
+    #iterate through img using blocks
+    blocks = 0
+    for y in range(0, ysize, y_block_size):
+        if y > 0:
+            y = y - 30 # use -30 pixels overlap to prevent "lines at the edges of blocks in object detection"
+        if y + y_block_size < ysize:
+            rows = y_block_size
+        else:
+            rows = ysize - y
+        for x in range(0, xsize, x_block_size):
+            if x > 0:
+                x = x - 30
+            blocks += 1
+            #if statement for subset
+            if blocks in it:
+                if x + x_block_size < xsize:
+                    cols = x_block_size
+                else:
+                    cols = xsize - x
+                #read bands as array
+                r = np.array(ds.GetRasterBand(1).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                g = np.array(ds.GetRasterBand(2).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                b = np.array(ds.GetRasterBand(3).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                img = np.zeros([b.shape[0],b.shape[1],3], np.uint8)
+                img[:,:,0] = b
+                img[:,:,1] = g
+                img[:,:,2] = r
+                if img.mean() != 0:             
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                    img = img[:,:,1:3]                
+                    flattened_arr = img.reshape(-1, img.shape[-1])
+                    subset = np.append(flattened_arr, subset, axis = 0)
 
-#initialize cluster centres for kmeans clustering
-green_lab = cv2.cvtColor(np.array([[[100,190,150]]]).astype(np.uint8), cv2.COLOR_BGR2LAB) # as sampled from ortho's file
-green_init = np.array(green_lab[0,0,1:3])
-background_init = cv2.cvtColor(np.array([[[215,198,190]]]).astype(np.uint8), cv2.COLOR_BGR2LAB) # as sampled from ortho's file
+    scaler = preprocessing.MinMaxScaler(feature_range = (0,255))
+    #get a and b band of subset
+    a = subset[:,0]
+    b = subset[:,1]
+    subset = None
+    
+    #stack bands to create final input for clustering algorithm
+    Classificatie_Lab = np.column_stack((a, b))
+    a = None
+    b = None
+
+    scaler.fit(Classificatie_Lab)
+
+    #create scaler and scale bands to value between 0 and 1
+    #Classificatie_Lab = scaler.fit_transform(Classificatie_Lab)
+        
+    #scale provided initial centres with same scaler
+    #kmeans_init = scaler.transform(kmeans_init)  
+        
+    #tic = time.time()
+    #perform kmeans clustering
+    #kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 50, n_clusters = 3, verbose = 0, precompute_distances = False)
+    #kmeans.fit(Classificatie_Lab)
+    #toc = time.time()
+
+    #print('Processing took ' + str(toc-tic) + ' seconds')
+    return scaler #kmeans, scaler
+
+#set initial cluster centres based on sampling on images
+cover_lab = cv2.cvtColor(np.array([[[215,198,190]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
+cover_init = np.array(cover_lab[0,0,1:3], dtype = np.uint8)
+background_init = cv2.cvtColor(np.array([[[120,125,130]]]).astype(np.uint8), cv2.COLOR_BGR2LAB) # as sampled from tif file
 background_init = np.array(background_init[0,0,1:3])
-#cluster centres
-kmeans_init = np.array([background_init, green_init])
+green_lab = cv2.cvtColor(np.array([[[100,190,120]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
+green_init = np.array(green_lab[0,0,1:3])
+
+#create init input for clustering algorithm
+kmeans_init = np.array([background_init, green_init, cover_init])
+
 
 #load model for object classification
 model = models.load_model(r'C:\Users\VanBoven\Documents\GitHub\DataAnalysis/Broccoli_model1.h5')
@@ -138,21 +213,26 @@ min_plant_size = 16
 max_plant_size = 1600
 
 #use small block size to cluster based on colors in local neighbourhood
-x_block_size = 256  
-y_block_size = 256
+x_block_size = 1024
+y_block_size = 1024
 
 #input img_path
-img_path = r'E:\VanBovenDrive\VanBoven MT\Archive\c08_biobrass\AZ74\20190513\1357\Orthomosaic/c08_biobrass-AZ74-201905131357.tif'
+img_path = r'F:\700 Georeferencing\AZ74 georeferencing\clipped_imagery/c08_biobrass-AZ74-201905171650_gr.tif'
 #output file directory
-out_path = r''
+out_path = r'F:\700 Georeferencing\AZ74 georeferencing\plant_count'
 
 #create iterator to process blocks of imagery one by one. 
-it = list(range(0,400000, 1))
-#skip = True if you do not want to process each block but you want to process the entire image
-process_full_image = True
+it = list(range(0,25000, 4))
 
+#True if you want to run the entire workflow
+process_full_image = False
+
+#kmeans, scaler = get_cluster_centroids(img_path, kmeans_init)
+#scaler = get_scaler(img_path, kmeans_init)
+#kmeans_init = scaler.transform(kmeans_init)
+                    
 # Function to read the raster as arrays for the chosen block size.
-def cluster_objects(x_block_size, y_block_size, it, img_path, out_path):    
+def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init):    
     #time process
     tic = time.time()
 
@@ -188,9 +268,9 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path):
                 else:
                     cols = xsize - x
                 #read bands as array
-                b = np.array(ds.GetRasterBand(1).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                r = np.array(ds.GetRasterBand(1).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
                 g = np.array(ds.GetRasterBand(2).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
-                r = np.array(ds.GetRasterBand(3).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                b = np.array(ds.GetRasterBand(3).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
                 img = np.zeros([b.shape[0],b.shape[1],3], np.uint8)
                 img[:,:,0] = b
                 img[:,:,1] = g
@@ -209,26 +289,44 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path):
                     a_flat = a.flatten()
                     b2_flat = b2.flatten()
                     
-                    #scale values to 0-1
-                    scaler = preprocessing.MinMaxScaler(feature_range=(0, 255))
-                    a_flat = scaler.fit_transform(a_flat)
-                    b2_flat = scaler.fit_transform(b2_flat)
-                    
                     #stack bands to create final input for clustering algorithm
-                    Classificatie_Lab = np.ma.column_stack((a_flat, b2_flat))
+                    Classificatie_Lab = np.column_stack((a_flat, b2_flat))
+                    
+                    #scale values between 0-1
+                    scaler = preprocessing.MinMaxScaler()
+                    Classificatie_Lab = scaler.fit_transform(Classificatie_Lab)
+                    scaled_green = Classificatie_Lab[:,1] - Classificatie_Lab[:,0]                  
+                    value = scaled_green.mean()+1*scaled_green.std()
+                    #kmeans_init = scaler.transform(kmeans_init)                                       
+                    idx = (np.abs(scaled_green - value)).argmin()
+                    kmeans_init[1,:] = Classificatie_Lab[idx,:]
+                    
+                    idx_background = (np.abs(scaled_green - 0)).argmin()
+                    kmeans_init[0,:] = Classificatie_Lab[idx_background,:]
+
+                    scaled_cover = Classificatie_Lab[:,0] - Classificatie_Lab[:,1]   
+                    value = scaled_cover.mean()+1*scaled_cover.std()                                
+                    idx_cover = (np.abs(scaled_cover - value)).argmin()
+                    kmeans_init[2,:] = Classificatie_Lab[idx_cover,:]
                     
                     #perform kmeans clustering
-                    kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 25, n_clusters = 2, verbose = 0)
+                    kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
                     kmeans.fit(Classificatie_Lab)
-                    
-                    #do something with resulting cluster centres
+                    #kmeans_init = kmeans.cluster_centers_
+                    #get cluster centres
+                    centres = kmeans.cluster_centers_
+                    print(centres)
+                    #get_green = np.argmax(centres[:,1] - centres[:,0])              
+                    #get_green = 1   
                     
                     #cluster image block
                     y_kmeans = kmeans.predict(Classificatie_Lab)
-                    
+                    unique, counts = np.unique(y_kmeans, return_counts=True)
+                    get_green = np.argmin(counts)
+                                       
                     #Get plants
-                    y_kmeans[y_kmeans == 0] = 0
-                    y_kmeans[y_kmeans == 1] = 1
+                    y_kmeans[y_kmeans == get_green] = 1
+                    y_kmeans[y_kmeans != get_green] = 0
 
                     #convert binary output back to 8bit image                
                     kmeans_img = y_kmeans                
@@ -242,67 +340,80 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path):
                     template[y:y+rows, x:x+cols] = template[y:y+rows, x:x+cols] + closing
                     #print('processing of block ' + str(blocks) + ' finished')
     
+    template[template > 0] = 255
     #write of file as jpg img to store results if something goes wrong                
-    cv2.imwrite(os.path.join(outpath, 'plant_mask', 'AZ74_blocks_256_'+str(i)+'.jpg',template))     
+    cv2.imwrite(os.path.join(out_path, (os.path.basename(img_path)[:-4] + '_mask.jpg')),template)     
     toc = time.time()
     print("processing of blocks took "+ str(toc - tic)+" seconds")
+    
     return template
-    
-    
-        if process_full_image == True:
+ 
+def contours2shp(template, process_full_image, model, out_path):
+    ds = gdal.Open(img_path)
+    band = ds.GetRasterBand(1)
+    xsize = band.XSize
+    ysize = band.YSize
 
-        print('Start with classification of objects')
-        #initiate output img
-        output = np.zeros([ysize,xsize,3], np.uint8)
-        b = np.array(ds.GetRasterBand(1).ReadAsArray()).astype(np.uint(8))
-        output[:,:,0] = b
-        b = None
-        g = np.array(ds.GetRasterBand(2).ReadAsArray()).astype(np.uint(8))
-        output[:,:,1] = g
-        g = None
-        r = np.array(ds.GetRasterBand(3).ReadAsArray()).astype(np.uint(8))
-        output[:,:,2] = r
-        r = None
-        
-        result_img = np.zeros((template.shape[0],template.shape[1]),dtype=np.uint8)
-        
-        #Get contours of features
-        contours, hierarchy = cv2.findContours(template, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        #create df with relevant data
-        df = pd.DataFrame({'contours': contours})
-        df['area'] = df.contours.apply(lambda x:cv2.contourArea(x)) 
-        df = df[(df['area'] > 81) & (df['area'] < 500)]
-        df['moment'] = df.contours.apply(lambda x:cv2.moments(x))
-        df['centroid'] = df.moment.apply(lambda x:(int(x['m01']/x['m00']),int(x['m10']/x['m00'])))
-        df['cx'] = df.moment.apply(lambda x:int(x['m10']/x['m00']))
-        df['cy'] = df.moment.apply(lambda x:int(x['m01']/x['m00']))
-        df['bbox'] = df.contours.apply(lambda x:cv2.boundingRect(x))
-        #create input images for model
-        df['output'] = df.bbox.apply(lambda x:output[x[1]-5: x[1]+x[3]+5, x[0]-5:x[0]+x[2]+5])
-        df = df[df.output.apply(lambda x:x.shape[0]*x.shape[1]) > 0]
-        #resize data to create input tensor for model
-        df['input'] = df.output.apply(lambda x:resize(x))
-        
-        #remove img from memory
-        output = None
-        
-        #resize images
-        #df.input.apply(lambda x:x.resize(50,50,3, refcheck=False))       
-        model_input = np.asarray(list(df.input.iloc[:]))
-        
-        #predict
-        tic = time.time()
+    print('Start with classification of objects')
+    #initiate output img
+    output = np.zeros([ysize,xsize,3], np.uint8)
+    r = np.array(ds.GetRasterBand(1).ReadAsArray()).astype(np.uint(8))
+    output[:,:,0] = r
+    r = None
+    g = np.array(ds.GetRasterBand(2).ReadAsArray()).astype(np.uint(8))
+    output[:,:,1] = g
+    g = None
+    b = np.array(ds.GetRasterBand(3).ReadAsArray()).astype(np.uint(8))
+    output[:,:,2] = b
+    b = None
+    
+    #result_img = np.zeros((template.shape[0],template.shape[1]),dtype=np.uint8)
+    
+    #Get contours of features
+    contours, hierarchy = cv2.findContours(template, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    #create df with relevant data
+    df = pd.DataFrame({'contours': contours})
+    df['area'] = df.contours.apply(lambda x:cv2.contourArea(x)) 
+    df = df[(df['area'] > 9) & (df['area'] < 500)]
+    df['moment'] = df.contours.apply(lambda x:cv2.moments(x))        
+    df['centroid'] = df.moment.apply(lambda x:(int(x['m01']/x['m00']),int(x['m10']/x['m00'])))
+    df['cx'] = df.moment.apply(lambda x:int(x['m10']/x['m00']))
+    df['cy'] = df.moment.apply(lambda x:int(x['m01']/x['m00']))
+    df['bbox'] = df.contours.apply(lambda x:cv2.boundingRect(x))
+    #create input images for model
+    df['output'] = df.bbox.apply(lambda x:output[x[1]-5: x[1]+x[3]+5, x[0]-5:x[0]+x[2]+5])
+    df = df[df.output.apply(lambda x:x.shape[0]*x.shape[1]) > 0]
+    #resize data to create input tensor for model
+    df['input'] = df.output.apply(lambda x:resize(x))
+    
+    #remove img from memory
+    output = None
+    
+    #resize images
+    #df.input.apply(lambda x:x.resize(50,50,3, refcheck=False))       
+    model_input = np.asarray(list(df.input.iloc[:]))
+    
+    #predict
+    tic = time.time()
+    try:
         prediction = model.predict(model_input)
+        
         #get prediction result
         pred_final = prediction.argmax(axis=1)
         #add to df
         df['prediction'] = pred_final
-        toc = time.time()
-        print('classification of '+str(len(df))+' objects took '+str(toc - tic) + ' seconds')
-        
-        write_plants2shp(img_path, df, shp_dir, shp_name)
+    except:
+        print('no prediction')
+    
+    df[' prediction'] = 1
+    toc = time.time()
+    print('classification of '+str(len(df))+' objects took '+str(toc - tic) + ' seconds')
+    
+    write_plants2shp(img_path, out_path ,df)
 
-
+template = cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init)
+if process_full_image == True:
+    contours2shp(template, process_full_image, model, out_path)
 
 
 
