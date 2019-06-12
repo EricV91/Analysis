@@ -194,11 +194,11 @@ def get_scaler(img_path, kmeans_init):
     return scaler #kmeans, scaler
 
 #set initial cluster centres based on sampling on images
-cover_lab = cv2.cvtColor(np.array([[[215,198,190]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
+cover_lab = cv2.cvtColor(np.array([[[165,159,148]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
 cover_init = np.array(cover_lab[0,0,1:3], dtype = np.uint8)
 background_init = cv2.cvtColor(np.array([[[120,125,130]]]).astype(np.uint8), cv2.COLOR_BGR2LAB) # as sampled from tif file
 background_init = np.array(background_init[0,0,1:3])
-green_lab = cv2.cvtColor(np.array([[[100,190,120]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
+green_lab = cv2.cvtColor(np.array([[[87,116,89]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
 green_init = np.array(green_lab[0,0,1:3])
 
 #create init input for clustering algorithm
@@ -217,15 +217,15 @@ x_block_size = 1024
 y_block_size = 1024
 
 #input img_path
-img_path = r'F:\700 Georeferencing\AZ74 georeferencing\clipped_imagery/c08_biobrass-AZ74-201905171650_gr.tif'
+img_path = r'F:\700 Georeferencing\AZ74 georeferencing\clipped_imagery/c08_biobrass-AZ74-201905131357.tif'
 #output file directory
 out_path = r'F:\700 Georeferencing\AZ74 georeferencing\plant_count'
 
 #create iterator to process blocks of imagery one by one. 
-it = list(range(0,25000, 4))
+it = list(range(0,25000, 1))
 
 #True if you want to run the entire workflow
-process_full_image = False
+process_full_image = True
 
 #kmeans, scaler = get_cluster_centroids(img_path, kmeans_init)
 #scaler = get_scaler(img_path, kmeans_init)
@@ -293,36 +293,39 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
                     Classificatie_Lab = np.column_stack((a_flat, b2_flat))
                     
                     #scale values between 0-1
-                    scaler = preprocessing.MinMaxScaler()
-                    Classificatie_Lab = scaler.fit_transform(Classificatie_Lab)
-                    scaled_green = Classificatie_Lab[:,1] - Classificatie_Lab[:,0]                  
-                    value = scaled_green.mean()+1*scaled_green.std()
+                    #scaler = preprocessing.MinMaxScaler()
+                    #Classificatie_Lab = scaler.fit_transform(Classificatie_Lab)
+                    #scaled_green = Classificatie_Lab[:,1] - Classificatie_Lab[:,0]                  
+                    #value = scaled_green.mean()+1*scaled_green.std()
                     #kmeans_init = scaler.transform(kmeans_init)                                       
-                    idx = (np.abs(scaled_green - value)).argmin()
-                    kmeans_init[1,:] = Classificatie_Lab[idx,:]
+                    #idx = (np.abs(scaled_green - value)).argmin()
+                    #kmeans_init[1,:] = Classificatie_Lab[idx,:]
                     
-                    idx_background = (np.abs(scaled_green - 0)).argmin()
-                    kmeans_init[0,:] = Classificatie_Lab[idx_background,:]
+                    #idx_background = (np.abs(scaled_green - 0)).argmin()
+                    #kmeans_init[0,:] = Classificatie_Lab[idx_background,:]
 
-                    scaled_cover = Classificatie_Lab[:,0] - Classificatie_Lab[:,1]   
-                    value = scaled_cover.mean()+1*scaled_cover.std()                                
-                    idx_cover = (np.abs(scaled_cover - value)).argmin()
-                    kmeans_init[2,:] = Classificatie_Lab[idx_cover,:]
+                    #scaled_cover = Classificatie_Lab[:,0] - Classificatie_Lab[:,1]   
+                    #value = scaled_cover.mean()+1*scaled_cover.std()                                
+                    #idx_cover = (np.abs(scaled_cover - value)).argmin()
+                    #kmeans_init[2,:] = Classificatie_Lab[idx_cover,:]
                     
                     #perform kmeans clustering
                     kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
+                    #kmeans = KMeans(n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
                     kmeans.fit(Classificatie_Lab)
                     #kmeans_init = kmeans.cluster_centers_
                     #get cluster centres
                     centres = kmeans.cluster_centers_
                     print(centres)
                     #get_green = np.argmax(centres[:,1] - centres[:,0])              
-                    #get_green = 1   
+                    get_green = 1   
                     
                     #cluster image block
                     y_kmeans = kmeans.predict(Classificatie_Lab)
                     unique, counts = np.unique(y_kmeans, return_counts=True)
-                    get_green = np.argmin(counts)
+                    #print(counts.min())
+                    #print(np.argmin(counts))
+                    #get_green = np.argmin(counts)
                                        
                     #Get plants
                     y_kmeans[y_kmeans == get_green] = 1
