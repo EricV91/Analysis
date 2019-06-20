@@ -97,6 +97,9 @@ def write_plants2shp(img_path, out_path, df):
     gdf_poly = gdf_poly.drop(['contours', 'moment', 'cx', 'cy', 'bbox', 'output', 'input',
        'centroid', 'coords', 'geom', 'geom2'], axis=1)
     
+    calc_area = gdf_poly.to_crs({'init': 'epsg:28992'})
+    gdf_point['area'] = np.asarray(calc_area.geometry.area)
+    
     gdf_point.to_file(os.path.join(out_path, (os.path.basename(img_path)[-16:-4] + '_points.shp')))
     gdf_poly.to_file(os.path.join(out_path, (os.path.basename(img_path)[-16:-4] + '_poly.shp')))
     return
@@ -124,8 +127,8 @@ def get_scaler(img_path, kmeans_init):
     xsize = band.XSize
     ysize = band.YSize
     #define size of img blocks
-    x_block_size = 1024  
-    y_block_size = 1024
+    x_block_size = 512  
+    y_block_size = 512
     #create iterator to process blocks of imagery one by one. #get 10% subset 
     it = list(range(0,1000, 5))
     #initiate nparray
@@ -136,14 +139,14 @@ def get_scaler(img_path, kmeans_init):
     blocks = 0
     for y in range(0, ysize, y_block_size):
         if y > 0:
-            y = y - 30 # use -30 pixels overlap to prevent "lines at the edges of blocks in object detection"
+            y = y 
         if y + y_block_size < ysize:
             rows = y_block_size
         else:
             rows = ysize - y
         for x in range(0, xsize, x_block_size):
             if x > 0:
-                x = x - 30
+                x = x 
             blocks += 1
             #if statement for subset
             if blocks in it:
@@ -178,20 +181,75 @@ def get_scaler(img_path, kmeans_init):
 
     scaler.fit(Classificatie_Lab)
 
-    #create scaler and scale bands to value between 0 and 1
-    #Classificatie_Lab = scaler.fit_transform(Classificatie_Lab)
-        
-    #scale provided initial centres with same scaler
-    #kmeans_init = scaler.transform(kmeans_init)  
-        
-    #tic = time.time()
-    #perform kmeans clustering
-    #kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 50, n_clusters = 3, verbose = 0, precompute_distances = False)
-    #kmeans.fit(Classificatie_Lab)
-    #toc = time.time()
+    return scaler 
 
-    #print('Processing took ' + str(toc-tic) + ' seconds')
-    return scaler #kmeans, scaler
+def fit_kmeans_on_subset(img_path, kmeans_init):
+    #get raster
+    ds = gdal.Open(img_path)
+    band = ds.GetRasterBand(1)
+    xsize = band.XSize
+    ysize = band.YSize
+    #define size of img blocks
+    x_block_size = 512  
+    y_block_size = 512
+    #create iterator to process blocks of imagery one by one. #get 10% subset 
+    it = list(range(0,10000, 8))
+    #initiate nparray
+    subset = np.array((), dtype = np.uint8)
+    subset = subset.reshape(0,2)
+    
+    #iterate through img using blocks
+    blocks = 0
+    for y in range(0, ysize, y_block_size):
+        if y > 0:
+            y = y 
+        if y + y_block_size < ysize:
+            rows = y_block_size
+        else:
+            rows = ysize - y
+        for x in range(0, xsize, x_block_size):
+            if x > 0:
+                x = x 
+            blocks += 1
+            #if statement for subset
+            if blocks in it:
+                if x + x_block_size < xsize:
+                    cols = x_block_size
+                else:
+                    cols = xsize - x
+                #read bands as array
+                r = np.array(ds.GetRasterBand(1).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                g = np.array(ds.GetRasterBand(2).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                b = np.array(ds.GetRasterBand(3).ReadAsArray(x, y, cols, rows), dtype = np.uint(8))
+                img = np.zeros([b.shape[0],b.shape[1],3], np.uint8)
+                img[:,:,0] = b
+                img[:,:,1] = g
+                img[:,:,2] = r
+                if img.mean() != 0:             
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                    img = img[:,:,1:3]                
+                    flattened_arr = img.reshape(-1, img.shape[-1])
+                    subset = np.append(flattened_arr, subset, axis = 0)
+
+    #get a and b band of subset
+    a = subset[:,0]
+    b = subset[:,1]
+    subset = None
+    
+    #stack bands to create final input for clustering algorithm
+    Classificatie_Lab = np.column_stack((a, b))
+    a = None
+    b = None
+    
+    tic = time.time()
+    #perform kmeans clustering
+    kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 50, n_clusters = 3, verbose = 0, precompute_distances = False)
+    kmeans.fit(Classificatie_Lab)
+    toc = time.time()
+
+    print('Processing took ' + str(toc-tic) + ' seconds')
+    return kmeans
+
 
 #set initial cluster centres based on sampling on images
 cover_lab = cv2.cvtColor(np.array([[[165,159,148]]]).astype(np.uint8), cv2.COLOR_BGR2LAB)
@@ -213,26 +271,31 @@ min_plant_size = 16
 max_plant_size = 1600
 
 #use small block size to cluster based on colors in local neighbourhood
-x_block_size = 1024
-y_block_size = 1024
+x_block_size = 512
+y_block_size = 512
 
 #input img_path
-img_path = r'F:\700 Georeferencing\AZ74 georeferencing\clipped_imagery/c08_biobrass-AZ74-201905131357.tif'
+img_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\clipped_imagery/20190513.tif'
 #output file directory
-out_path = r'F:\700 Georeferencing\AZ74 georeferencing\plant_count'
+out_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\grown_area'
 
 #create iterator to process blocks of imagery one by one. 
-it = list(range(0,25000, 1))
+it = list(range(0,50000, 10))
 
 #True if you want to run the entire workflow
 process_full_image = True
+iterative_fit = False
+run_classification = False
 
 #kmeans, scaler = get_cluster_centroids(img_path, kmeans_init)
 #scaler = get_scaler(img_path, kmeans_init)
 #kmeans_init = scaler.transform(kmeans_init)
                     
 # Function to read the raster as arrays for the chosen block size.
-def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init):    
+def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init, iterative_fit, run_classification):    
+    #fit kmeans to random subset of entire image if False
+    if iterative_fit == False:
+        kmeans = fit_kmeans_on_subset(img_path, kmeans_init)
     #time process
     tic = time.time()
 
@@ -246,7 +309,7 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
     template = np.zeros([ysize, xsize], np.uint8)
 
     #define kernel for morhpological closing operation
-    kernel = np.ones((7,7), dtype='uint8')
+    kernel = np.ones((3,3), dtype='uint8')
     
     #iterate through img using blocks
     blocks = 0
@@ -309,43 +372,57 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
                     #idx_cover = (np.abs(scaled_cover - value)).argmin()
                     #kmeans_init[2,:] = Classificatie_Lab[idx_cover,:]
                     
-                    #perform kmeans clustering
-                    kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
-                    #kmeans = KMeans(n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
-                    kmeans.fit(Classificatie_Lab)
-                    #kmeans_init = kmeans.cluster_centers_
-                    #get cluster centres
-                    centres = kmeans.cluster_centers_
-                    print(centres)
-                    #get_green = np.argmax(centres[:,1] - centres[:,0])              
-                    get_green = 1   
+                    #fit kmeans to data distribution of block if True
+                    if iterative_fit == True:
+                        kmeans = KMeans(init = kmeans_init, n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
+                        #kmeans = KMeans(n_jobs = -1, max_iter = 25, n_clusters = 3, verbose = 0)
+                        kmeans.fit(Classificatie_Lab)
                     
                     #cluster image block
                     y_kmeans = kmeans.predict(Classificatie_Lab)
                     unique, counts = np.unique(y_kmeans, return_counts=True)
+
+                    get_green = 1 
+                    if np.count_nonzero(img) < (512*512*3) - 25000:                        
+                    #kmeans_init = kmeans.cluster_centers_
+                        #get cluster centres
+                        centres = kmeans.cluster_centers_
+                    #print(centres)
+                        get_green = np.argmax(centres[:,1] - centres[:,0])
+                        #not_green = np.argmin(counts)
+                        #not_green2 = np.argmax(counts)                    
+
                     #print(counts.min())
                     #print(np.argmin(counts))
                     #get_green = np.argmin(counts)
                                        
                     #Get plants
+                    centres = kmeans.cluster_centers_
+                    #print(centres)
+                    get_green = np.argmax(centres[:,1] - centres[:,0])
+
                     y_kmeans[y_kmeans == get_green] = 1
                     y_kmeans[y_kmeans != get_green] = 0
 
                     #convert binary output back to 8bit image                
                     kmeans_img = y_kmeans                
                     kmeans_img = kmeans_img.reshape(img.shape[0:2]).astype(np.uint8)
-                    binary_img = kmeans_img * 125
+                    binary_img = kmeans_img * 50
                     
                     #close detected shapes
                     closing = cv2.morphologyEx(binary_img, cv2.MORPH_CLOSE, kernel)
-                    
+                    #element = np.ones((7,2), dtype='uint8')
+                    #closing = cv2.erode(closing, element)
+                    #closing = cv2.morphologyEx(closing, cv2.MORPH_CLOSE, kernel)
+
+                    #closing = binary_img
                     #write img block result back on original sized image template         
                     template[y:y+rows, x:x+cols] = template[y:y+rows, x:x+cols] + closing
                     #print('processing of block ' + str(blocks) + ' finished')
     
     template[template > 0] = 255
     #write of file as jpg img to store results if something goes wrong                
-    cv2.imwrite(os.path.join(out_path, (os.path.basename(img_path)[:-4] + '_mask.jpg')),template)     
+    cv2.imwrite(os.path.join(out_path, (os.path.basename(img_path)[:-4] + '.jpg')),template)     
     toc = time.time()
     print("processing of blocks took "+ str(toc - tic)+" seconds")
     
@@ -377,44 +454,47 @@ def contours2shp(template, process_full_image, model, out_path):
     #create df with relevant data
     df = pd.DataFrame({'contours': contours})
     df['area'] = df.contours.apply(lambda x:cv2.contourArea(x)) 
-    df = df[(df['area'] > 9) & (df['area'] < 500)]
+    df = df[(df['area'] > 9)]# & (df['area'] < 1600)]
     df['moment'] = df.contours.apply(lambda x:cv2.moments(x))        
     df['centroid'] = df.moment.apply(lambda x:(int(x['m01']/x['m00']),int(x['m10']/x['m00'])))
     df['cx'] = df.moment.apply(lambda x:int(x['m10']/x['m00']))
     df['cy'] = df.moment.apply(lambda x:int(x['m01']/x['m00']))
     df['bbox'] = df.contours.apply(lambda x:cv2.boundingRect(x))
-    #create input images for model
-    df['output'] = df.bbox.apply(lambda x:output[x[1]-5: x[1]+x[3]+5, x[0]-5:x[0]+x[2]+5])
-    df = df[df.output.apply(lambda x:x.shape[0]*x.shape[1]) > 0]
-    #resize data to create input tensor for model
-    df['input'] = df.output.apply(lambda x:resize(x))
-    
-    #remove img from memory
-    output = None
-    
-    #resize images
-    #df.input.apply(lambda x:x.resize(50,50,3, refcheck=False))       
-    model_input = np.asarray(list(df.input.iloc[:]))
-    
-    #predict
-    tic = time.time()
-    try:
-        prediction = model.predict(model_input)
+    if run_classification == True:
+        #create input images for model
+        df['output'] = df.bbox.apply(lambda x:output[x[1]-5: x[1]+x[3]+5, x[0]-5:x[0]+x[2]+5])
+        df = df[df.output.apply(lambda x:x.shape[0]*x.shape[1]) > 0]
+        #resize data to create input tensor for model
+        df['input'] = df.output.apply(lambda x:resize(x))
         
-        #get prediction result
-        pred_final = prediction.argmax(axis=1)
-        #add to df
-        df['prediction'] = pred_final
-    except:
-        print('no prediction')
+        #remove img from memory
+        output = None
+        
+        #resize images
+        #df.input.apply(lambda x:x.resize(50,50,3, refcheck=False))       
+        model_input = np.asarray(list(df.input.iloc[:]))
+        
+        #predict
+        tic = time.time()
+        try:
+            prediction = model.predict(model_input)
+            
+            #get prediction result
+            pred_final = prediction.argmax(axis=1)
+            #add to df
+            df['prediction'] = pred_final
+        except:
+            print('no prediction')
     
-    df[' prediction'] = 1
-    toc = time.time()
-    print('classification of '+str(len(df))+' objects took '+str(toc - tic) + ' seconds')
-    
+    #df['prediction'] = 1
+        toc = time.time()
+        print('classification of '+str(len(df))+' objects took '+str(toc - tic) + ' seconds')
+    if run_classification == False:
+        df['output'] = np.nan
+        df['input'] = np.nan
     write_plants2shp(img_path, out_path ,df)
 
-template = cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init)
+template = cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init, iterative_fit, run_classification)
 if process_full_image == True:
     contours2shp(template, process_full_image, model, out_path)
 
