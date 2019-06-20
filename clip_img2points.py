@@ -25,12 +25,12 @@ def reshape_img(x):
     return y
     
 #define variables
-output_path = r'E:\400 Data analysis\410 Plant count\Training_data\mammoet/' 
-img_path = r'E:\VanBovenDrive\VanBoven MT\Archive\c01_verdonk\Mammoet\20190521\1139\Orthomosaic/c01_verdonk-Mammoet-201905211139_clipped.tif'
+output_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\testing/' 
+img_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\DEM/20190603_modified.tif'
 shape_file = r'E:\400 Data analysis\410 Plant count\test_results\c01_verdonk-Mammoet-201905211139_clipped_points2.shp'
 #img size in m radius from centroid
-img_size = 0.18
-it = list(range(0,300000, 8))
+img_size = 0.35
+it = list(range(0,300000, 1))
 
 def points2train_img(img_size, img_path, shape_file, output_path, it):
     #read shp into gdf and convert to projected crs of NL   
