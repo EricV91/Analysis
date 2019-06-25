@@ -282,9 +282,11 @@ out_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\grown_area'
 #create iterator to process blocks of imagery one by one. 
 it = list(range(0,50000, 10))
 
-#True if you want to run the entire workflow
+#True if you want to process the image and generate shapefile output
 process_full_image = True
+#True if you want to fit the cluster centres iteratively to every image block, false if you fit in once to a subset of the entire ortho
 iterative_fit = False
+#True to run the classification model and add the result to the shapefile output
 run_classification = False
 
 #kmeans, scaler = get_cluster_centroids(img_path, kmeans_init)
@@ -381,14 +383,16 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
                     #cluster image block
                     y_kmeans = kmeans.predict(Classificatie_Lab)
                     unique, counts = np.unique(y_kmeans, return_counts=True)
-
-                    get_green = 1 
-                    if np.count_nonzero(img) < (512*512*3) - 25000:                        
+                    
+                    #green cluster has by default value 1
+                    #get_green = 1
+                    #image blocks with a lot
+                    #if np.count_nonzero(img) < (512*512*3) - 25000:                        
                     #kmeans_init = kmeans.cluster_centers_
                         #get cluster centres
-                        centres = kmeans.cluster_centers_
+                        #centres = kmeans.cluster_centers_
                     #print(centres)
-                        get_green = np.argmax(centres[:,1] - centres[:,0])
+                        #get_green = np.argmax(centres[:,1] - centres[:,0])
                         #not_green = np.argmin(counts)
                         #not_green2 = np.argmax(counts)                    
 
@@ -396,11 +400,12 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
                     #print(np.argmin(counts))
                     #get_green = np.argmin(counts)
                                        
-                    #Get plants
+                    #Get cluster centres
                     centres = kmeans.cluster_centers_
                     #print(centres)
+                    #get index of the greenest cluster centre
                     get_green = np.argmax(centres[:,1] - centres[:,0])
-
+                    #create binary output, green is one the rest is zero
                     y_kmeans[y_kmeans == get_green] = 1
                     y_kmeans[y_kmeans != get_green] = 0
 
@@ -411,17 +416,19 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
                     
                     #close detected shapes
                     closing = cv2.morphologyEx(binary_img, cv2.MORPH_CLOSE, kernel)
+                    
                     #element = np.ones((7,2), dtype='uint8')
                     #closing = cv2.erode(closing, element)
                     #closing = cv2.morphologyEx(closing, cv2.MORPH_CLOSE, kernel)
 
                     #closing = binary_img
+                    
                     #write img block result back on original sized image template         
                     template[y:y+rows, x:x+cols] = template[y:y+rows, x:x+cols] + closing
                     #print('processing of block ' + str(blocks) + ' finished')
     
     template[template > 0] = 255
-    #write of file as jpg img to store results if something goes wrong                
+    #write of file as jpg img to store results                 
     cv2.imwrite(os.path.join(out_path, (os.path.basename(img_path)[:-4] + '.jpg')),template)     
     toc = time.time()
     print("processing of blocks took "+ str(toc - tic)+" seconds")
@@ -429,6 +436,7 @@ def cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_i
     return template
  
 def contours2shp(template, process_full_image, model, out_path):
+    #read entire img to memory 
     ds = gdal.Open(img_path)
     band = ds.GetRasterBand(1)
     xsize = band.XSize
@@ -454,6 +462,7 @@ def contours2shp(template, process_full_image, model, out_path):
     #create df with relevant data
     df = pd.DataFrame({'contours': contours})
     df['area'] = df.contours.apply(lambda x:cv2.contourArea(x)) 
+    #filter features, area has to be > 0
     df = df[(df['area'] > 9)]# & (df['area'] < 1600)]
     df['moment'] = df.contours.apply(lambda x:cv2.moments(x))        
     df['centroid'] = df.moment.apply(lambda x:(int(x['m01']/x['m00']),int(x['m10']/x['m00'])))
@@ -492,6 +501,7 @@ def contours2shp(template, process_full_image, model, out_path):
     if run_classification == False:
         df['output'] = np.nan
         df['input'] = np.nan
+    #write output features to shapefile
     write_plants2shp(img_path, out_path ,df)
 
 template = cluster_objects(x_block_size, y_block_size, it, img_path, out_path, kmeans_init, iterative_fit, run_classification)
