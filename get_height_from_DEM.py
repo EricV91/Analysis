@@ -29,9 +29,8 @@ img_path = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\DEM/20190603_m
 shape_file = r'F:\700 Georeferencing\Hendrik de Heer georeferencing\Results/merged_points.shp'
 #img size in m radius from centroid
 img_size = 0.50
-it = list(range(0,300000, 1))
 
-def extract_DEM_values(img_size, img_path, shape_file, output_path, it):
+def extract_DEM_values(img_size, img_path, shape_file, output_path):
     #read shp into gdf and convert to projected crs of NL   
     gdf_points = gpd.read_file(shape_file)
     point_set = gdf_points.copy()
@@ -55,11 +54,11 @@ def extract_DEM_values(img_size, img_path, shape_file, output_path, it):
     gdf_points['output'] = gdf_points['out_img/out_trans'].apply(lambda x:x[0])
     gdf_points['output'] = gdf_points.output.apply(lambda x:remove_outliers_DEM(x))
     
-    #gdf_points['height'] = gdf_points.output.apply(lambda x: x.max()-x.min())
-    gdf_points['height'] = gdf_points.output.apply(lambda x: (x.mean+2.5*x.std())- (x.mean()-2.5*x.std()))
+    gdf_points['height'] = gdf_points.output.apply(lambda x: x.max()-x.min())
+    #gdf_points['height'] = gdf_points.output.apply(lambda x: (x.mean()+2.5*x.std())- (x.mean()-2.5*x.std()))
     
     point_set['height'] = gdf_points.height
 
-    point_set.to_file(os.path.join(output_path, 'points_height.shp'))
+    point_set.to_file(os.path.join(output_path, 'points_height_max.shp'))
     
-extract_DEM_values(img_size, img_path, shape_file, output_path, it)
+extract_DEM_values(img_size, img_path, shape_file, output_path)
